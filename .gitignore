@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# uv / venv
+.venv/
+
+# NOTE: .python-version IS committed here, unlike in conduct and wander. Those
+# two are pure-Python and tolerate whatever interpreter uv picks; Perform pulls
+# in native audio wheels (PortAudio via sounddevice, libsndfile via soundfile),
+# and a fresh interpreter release with no wheels yet turns `uv sync` into a
+# compiler error. 3.12 matches conduct's runtime (its Dockerfile is
+# python:3.12-slim), so the three services still agree on the version that
+# matters — this only removes the guesswork about which one you get.
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# The warm cache — content-addressed normalized PCM plus its SQLite index.
+# Every byte in here is rebuildable from a pack or from the source Wander
+# handed over, so it is a cache, not state worth carrying between machines.
+blobs/
+perform-library.sqlite
+perform-library.sqlite-journal
+
+# Asset packs are user-supplied media. The repo ships no media files (SPEC §5) —
+# the built-in tones are synthesized numerically at startup. Drop a pack folder
+# in here and it is discovered on the next boot. The README stays so the
+# directory exists in a fresh clone and explains itself.
+packs/*
+!packs/README.md
+
+# `say` recordings before they are normalized into the cache. Transient.
+speech/

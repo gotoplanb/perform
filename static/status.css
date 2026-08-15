@@ -1,0 +1,126 @@
+/* Operator dashboard. Dense, monospace, readable at 2am. */
+
+:root {
+  color-scheme: light dark;
+  --fg: #1c1c1c;
+  --dim: #767676;
+  --bg: #fbfbfa;
+  --panel: #fff;
+  --line: #e2e0dd;
+  --ok: #1f7a3f;
+  --warn: #9a6200;
+  --bad: #b32424;
+  --accent: #2b5fbd;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #e8e6e3;
+    --dim: #8b8b8b;
+    --bg: #131313;
+    --panel: #1b1b1b;
+    --line: #2e2e2e;
+    --ok: #5ac07f;
+    --warn: #d8a13a;
+    --bad: #e26b6b;
+    --accent: #7aa2e8;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 1.5rem;
+  max-width: 1100px;
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+header { display: flex; align-items: baseline; gap: 0.6rem; flex-wrap: wrap; }
+h1 { margin: 0 0.5rem 0 0; font-size: 15px; letter-spacing: 0.3em; text-transform: uppercase; }
+h2 { margin: 0 0 0.4rem; font-size: 13px; font-weight: 600; }
+
+.chip {
+  padding: 1px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  border: 1px solid var(--line);
+}
+.chip.ok { color: var(--ok); border-color: currentColor; }
+.chip.bad { color: var(--bad); border-color: currentColor; }
+.chip.warn { color: var(--warn); border-color: currentColor; }
+.chip.dim { color: var(--dim); }
+
+/* The one line someone actually came here to read. */
+.verdict {
+  margin: 1rem 0 1.5rem;
+  padding: 0.7rem 1rem;
+  background: var(--panel);
+  border-left: 3px solid var(--warn);
+  border-radius: 0 3px 3px 0;
+}
+.verdict.playing { border-left-color: var(--ok); color: var(--ok); }
+
+.buses { display: grid; gap: 0.8rem; }
+
+.bus {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line);
+  border-radius: 0 3px 3px 0;
+  padding: 0.7rem 0.9rem;
+}
+.bus.state-playing { border-left-color: var(--ok); }
+.bus.state-stalled { border-left-color: var(--bad); }
+.bus.state-resting { border-left-color: var(--accent); }
+
+.bus h2 .state { color: var(--dim); font-weight: 400; margin-left: 0.5rem; }
+.bus h2 .sink { color: var(--dim); font-weight: 400; font-size: 11px; }
+.bus.state-stalled h2 .state { color: var(--bad); }
+
+.levels { margin: 0 0 0.5rem; font-size: 11px; }
+.ducked { color: var(--warn); }
+.dim { color: var(--dim); }
+
+.item { padding: 0.35rem 0; display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: baseline; }
+.item.empty { color: var(--dim); }
+.item.current .label { font-weight: 600; }
+.label { color: var(--fg); }
+.asset { color: var(--accent); font-size: 11px; }
+
+.pending, .recent { margin: 0.3rem 0 0; padding-left: 1.2rem; font-size: 11px; }
+.pending li { color: var(--dim); }
+.recent { list-style: none; padding-left: 0; }
+.recent li { display: flex; gap: 0.5rem; align-items: baseline; }
+
+.badge {
+  font-size: 10px;
+  padding: 0 5px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  color: var(--dim);
+}
+.s-dropped .badge, .s-stopped .badge { color: var(--bad); border-color: currentColor; }
+.s-played .badge { color: var(--ok); border-color: currentColor; }
+.note { color: var(--warn); }
+
+.sinks, .warnings { margin-top: 1.5rem; }
+.sinks table { border-collapse: collapse; font-size: 11px; }
+.sinks th { text-align: left; padding-right: 1rem; font-weight: 600; }
+.sinks td { color: var(--dim); }
+
+.warnings ul { list-style: none; padding: 0; margin: 0; }
+.warnings li {
+  padding: 0.35rem 0;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: baseline;
+}
+
+footer { margin-top: 2rem; font-size: 11px; color: var(--dim); }
+footer a { color: var(--accent); text-decoration: none; }
+footer a:hover { text-decoration: underline; }

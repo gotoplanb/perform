@@ -1,0 +1,57 @@
+# Bus definitions, sink routing, and the duck matrix.
+#
+# Reload without a restart: `make reload-buses` (SIGUSR1). Not SIGHUP — uvicorn
+# steals that, the same reason conduct's pricing reload picked USR1.
+#
+# Keep the bus count small and fixed (SPEC §3). Buses are created at startup and
+# never at runtime, so an unknown bus name is a 404 rather than an implicit
+# create. Four is already generous; the shape below is voice / ambience for
+# audio, backdrop / overlay for the visual surface.
+
+buses:
+  # Dialogue and narration. Everything `say` produces lands here, and so does
+  # every line Conduct synthesized that Wander hands over.
+  #
+  # resting_open_ended is false, which is the whole point of this bus: a voice
+  # bus sitting on an `until_replaced` item is a hung scene, and /status says so
+  # after PERFORM_STALL_AFTER_S. A backdrop doing the same is fine.
+  - name: voice
+    sink: local_audio
+    gain_db: 0.0
+    resting_open_ended: false
+    # Voice ducks everything else. SPEC §3's sentence — "an ambience bus ducks a
+    # voice bus by a configured amount so words stay intelligible over a siren"
+    # — reads either direction, but the purpose clause settles it: for words to
+    # stay intelligible over a siren, the *siren* has to move. -12dB is enough
+    # to hear over without the bed disappearing; the fast attack catches the
+    # first syllable, the slow release stops it pumping between lines.
+    ducks:
+      - target: ambience
+        depth_db: -12.0
+        attack_ms: 80
+        release_ms: 500
+      - target: music
+        depth_db: -9.0
+        attack_ms: 120
+        release_ms: 700
+
+  # Beds, room tone, sirens, weather. Expected to rest on an open-ended item —
+  # that is its steady state, not a hang.
+  - name: ambience
+    sink: local_audio
+    gain_db: -6.0
+    resting_open_ended: true
+
+  # Score and stings. Separate from ambience so a scene can duck one without
+  # the other, and so a cue can be interrupted without killing the room tone.
+  - name: music
+    sink: local_audio
+    gain_db: -8.0
+    resting_open_ended: true
+
+  # The visual surface. Stills and video, muted — audio and video stay separate
+  # (SPEC §4), so nothing on this bus makes a sound. Rests open-ended: a
+  # backdrop that stays up until the scene changes is exactly right.
+  - name: backdrop
+    sink: visual
+    resting_open_ended: true

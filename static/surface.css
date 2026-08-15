@@ -1,0 +1,80 @@
+/* The surface is a display, not an interface. No chrome, no controls, black. */
+
+:root {
+  color-scheme: dark;
+  --fg: #e8e6e3;
+  --dim: #6b6b6b;
+  --bg: #000;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow: hidden;
+}
+
+#stage {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  display: grid;
+  place-items: center;
+}
+
+/* Every layer fills the stage and stacks. A backdrop sits at the bottom; an
+   overlay bus would sit above it. Ordering is by bus, assigned on arrival. */
+#stage .layer {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  opacity: 0;
+  transition: opacity var(--fade, 400ms) ease;
+}
+
+#stage .layer.visible { opacity: 1; }
+/* A hard cut has no transition at all — SPEC §3 notes a hard cut between
+   backdrops looks broken, so `cut` is available but `fade` is the default the
+   config should reach for. */
+#stage .layer.cut { transition: none; }
+
+#stage img,
+#stage video {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+#idle {
+  text-align: center;
+  color: var(--dim);
+}
+
+#idle .mark {
+  font-size: 11px;
+  letter-spacing: 0.4em;
+  text-transform: uppercase;
+  margin: 0 0 0.5rem;
+}
+
+#idle .hint { margin: 0; font-size: 12px; }
+
+/* Connection trouble is the one thing worth putting on screen, because a
+   surface that silently stopped receiving events looks identical to one with
+   nothing to show. */
+#status {
+  position: fixed;
+  bottom: 12px;
+  left: 12px;
+  padding: 4px 10px;
+  border-radius: 3px;
+  background: #3a1d1d;
+  color: #ffb4b4;
+  font-size: 12px;
+}

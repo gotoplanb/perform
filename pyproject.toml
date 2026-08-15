@@ -1,0 +1,87 @@
+[project]
+name = "perform"
+version = "0.1.0"
+description = "Multichannel playback server — renders what it's given, where it's told, in the order it's told"
+license = "MIT-0"
+license-files = ["LICENSE"]
+authors = [{ name = "Dave Stanton" }]
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "jinja2>=3.1",
+    "python-multipart>=0.0.20",
+    "pyyaml>=6.0",
+    "fastmcp>=2.0,<3.0",
+    "httpx>=0.27",
+    # Audio. sounddevice bundles PortAudio in its macOS ARM wheels; soundfile
+    # bundles libsndfile. Both are pure-Python bindings over those, so there is
+    # no compiler in the install path. numpy does the actual mixing arithmetic —
+    # a block of float32 frames per bus, summed. Deliberately no scipy: the
+    # handful of biquads the treatment presets need are a dozen lines each
+    # (audio/dsp.py), and scipy is a 40MB dependency to avoid.
+    "numpy>=2.0",
+    "sounddevice>=0.5",
+    "soundfile>=0.13",
+    # Telemetry. Pinned to the same floors conduct and wander use so all three
+    # services speak an identical OTLP dialect into Watchtower's Alloy collector.
+    # Do not raise these independently of the other two repos.
+    "opentelemetry-api>=1.28",
+    "opentelemetry-sdk>=1.28",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.28",
+    "opentelemetry-instrumentation-fastapi>=0.49b0",
+    "opentelemetry-instrumentation-httpx>=0.49b0",
+]
+
+[project.scripts]
+perform-mcp = "mcp_server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# App, not a library — the wheel only needs to carry enough to make the console
+# script importable. Same stance as conduct's `packages = ["scripts"]`.
+[tool.hatch.build.targets.wheel]
+packages = ["core", "audio", "sinks", "library", "config", "observability", "routes"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "ruff>=0.7",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Path",
+    "fastapi.Body",
+    "fastapi.Header",
+    "fastapi.Cookie",
+    "fastapi.Form",
+    "fastapi.File",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["."]
+omit = [".venv/*", "tests/*", "main.py", "lifespan.py"]
+branch = true
+relative_files = true

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Perform — surface</title>
+  <link rel="stylesheet" href="/static/surface.css">
+</head>
+<body>
+  <!--
+    The visual surface. Deliberately one page with no build step and no
+    framework — wander renders server-side Jinja with a sprinkle of Alpine, and
+    this is the same posture with even less.
+
+    Every <video> here is muted and it is not negotiable. Audio and video stay
+    separate (SPEC §4): sound comes out of the local audio sink, and a video's
+    own track is dropped. That is the correct architecture, and it happens to
+    sidestep browser autoplay policy entirely, since muted media autoplays
+    unconditionally.
+  -->
+  <div id="stage">
+    <div id="idle">
+      <p class="mark">perform</p>
+      <p class="hint">waiting for something to show</p>
+    </div>
+  </div>
+
+  <div id="status" hidden></div>
+
+  <script src="/static/surface.js"></script>
+</body>
+</html>
