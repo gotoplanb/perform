@@ -93,14 +93,38 @@ async def test_buses_endpoint_mirrors_status(client):
     assert set(buses) == {"voice", "ambience", "backdrop"}
 
 
-async def test_the_ui_renders(client, engine, device):
-    await client.post("/buses/voice/items", json={"asset": "tone.ok", "label": "a line"})
-    await drain(engine, device, 0.05)
-
+async def test_the_ui_serves_a_shell(client):
+    """The page renders client-side from /status, so this is a static shell —
+    it should not need the engine and should carry no data."""
     r = await client.get("/ui")
     assert r.status_code == 200
-    assert "perform" in r.text
-    assert "a line" in r.text
+    assert "status.js" in r.text
+    assert "status.css" in r.text
+
+
+async def test_the_ui_shell_leaks_no_status_data(client, engine, device):
+    """The reason the page became a shell rather than staying server-rendered:
+    this router carries no auth while /status does, so rendering the payload
+    here served it unauthenticated whenever PERFORM_TOKEN was set."""
+    await client.post(
+        "/buses/voice/items", json={"asset": "tone.ok", "label": "a secret label"}
+    )
+    await drain(engine, device, 0.05)
+
+    body = (await client.get("/ui")).text
+    assert "a secret label" not in body
+    assert "quiet_because" not in body
+    assert "tone.ok" not in body
+
+
+async def test_the_ui_works_without_the_engine(app, client):
+    """A shell has nothing to fail on. Useful precisely when perform is
+    unhealthy — the page loads and reports the failure rather than 503ing."""
+    engine, app.state.engine = app.state.engine, None
+    try:
+        assert (await client.get("/ui")).status_code == 200
+    finally:
+        app.state.engine = engine
 
 
 async def test_the_root_redirects_to_the_ui(client):

@@ -87,10 +87,16 @@ class LocalAudioSink(BaseSink):
         self._mixer.submit(SetGain(bus=bus, gain_db=gain_db))
 
     def status(self) -> dict:
+        """Sink-level facts only.
+
+        Deliberately *not* the per-bus mixer snapshot: `/status` already merges
+        that into its `buses` section, so returning it here duplicated the whole
+        thing — which reads as a wall of JSON on the status page next to the bus
+        cards showing the same numbers.
+        """
         snap = self._mixer.snapshot
         return {
             "device_running": bool(self._device and self._device.running),
             "xruns": getattr(self._device, "xruns", 0),
             "frames_rendered": snap.get("frames_rendered", 0),
-            "buses": snap.get("buses", {}),
         }

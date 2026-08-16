@@ -38,8 +38,15 @@ def test_successful_polls_are_dropped(quiet, path):
 
 
 def test_everything_else_is_kept(quiet):
-    for path in ("/speak", "/status", "/buses/voice/items", "/", "/surface"):
+    for path in ("/speak", "/buses/voice/items", "/", "/surface", "/assets"):
         assert quiet.filter(access_record(path)) is True
+
+
+def test_the_status_endpoint_is_quiet_because_the_ui_polls_it(quiet):
+    """`/ui` is a static shell that reads `/status` every 2s, so `/status` is
+    the polling endpoint. Filtering only `/ui` moved the noise rather than
+    removing it."""
+    assert quiet.filter(access_record("/status")) is False
 
 
 @pytest.mark.parametrize("status", [400, 404, 422, 500, 503])

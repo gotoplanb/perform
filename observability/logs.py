@@ -25,14 +25,18 @@ _initialized = False
 _console_initialized = False
 _access_filtered = False
 
-# Paths whose *successful* access-log lines are dropped. Both are polled: the
-# status page meta-refreshes every 2s and a health check is typically on a
-# timer, so between them they emit a line every second or two forever and bury
-# the events you actually opened the log to see.
+# Paths whose *successful* access-log lines are dropped. All three are polled,
+# so between them they emit a line every second or two forever and bury the
+# events you actually opened the log to see.
+#
+# `/status` is on this list because the status page reads it every 2s — it is
+# the polling endpoint now that `/ui` is a static shell. Leaving it off meant
+# the noise simply moved from one path to the other, which is worth stating
+# because it is the obvious place to get this wrong twice.
 #
 # This is a log-noise fix and nothing more — see `_QuietPolls` for the two
 # things it deliberately does not do.
-QUIET_PATHS: tuple[str, ...] = ("/ui", "/health")
+QUIET_PATHS: tuple[str, ...] = ("/ui", "/status", "/health")
 
 # Same format wander's bench runner uses, so a line from any of the three
 # services reads the same way in a terminal.
@@ -114,7 +118,7 @@ def quiet_access_logs(paths: tuple[str, ...] = QUIET_PATHS) -> None:
         return
     logging.getLogger("uvicorn.access").addFilter(_QuietPolls())
     _access_filtered = True
-    log.info("access log: suppressing successful %s polls", " and ".join(paths))
+    log.info("access log: suppressing successful polls of %s", ", ".join(paths))
 
 
 def init_logging(*, service_name: str, otlp_endpoint: str, role: str = "api") -> None:

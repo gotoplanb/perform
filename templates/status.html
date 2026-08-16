@@ -4,111 +4,43 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Perform — status</title>
-  <!-- Cheap auto-refresh. This is an operator dashboard on loopback, not an
-       app; a meta refresh is the right amount of machinery. -->
-  <meta http-equiv="refresh" content="2">
   <link rel="stylesheet" href="/static/status.css">
 </head>
 <body>
+<!--
+  The shell only. Everything below #app is rendered by static/status.js from
+  GET /status.
+
+  This used to be a server-rendered page with `<meta http-equiv="refresh">`,
+  which reloaded the whole document every two seconds — losing scroll position,
+  and emitting an access-log line every two seconds forever.
+
+  The rendering lives in one place (the JS) rather than being duplicated in
+  Jinja and JS and left to drift. The cost is that this page needs JavaScript;
+  for a loopback operator dashboard that is a fair trade, and `/status` serves
+  the same data as JSON for anything that can't run it.
+-->
 <header>
   <h1>perform</h1>
-  <span class="chip {{ 'ok' if s.device.running else 'bad' }}">
-    device {{ 'running' if s.device.running else 'down' }}
-  </span>
-  {% if s.device.xruns %}<span class="chip warn">{{ s.device.xruns }} xrun(s)</span>{% endif %}
-  <span class="chip dim">{{ '%.1f'|format(s.device.frames_rendered / 48000) }}s rendered</span>
+  <span id="conn" class="chip dim">connecting…</span>
+  <span id="device" class="chip dim"></span>
+  <span id="xruns" class="chip warn" hidden></span>
+  <span id="rendered" class="chip dim"></span>
 </header>
 
-{# The headline. SPEC §8 asks that "why is it quiet" take seconds, and making
-   someone infer it from the table below is not seconds. #}
-{% if s.quiet_because %}
-<p class="verdict">{{ s.quiet_because }}</p>
-{% else %}
-<p class="verdict playing">playing</p>
-{% endif %}
+<noscript>
+  <p class="verdict">
+    This page renders from <a href="/status">/status</a>, which needs JavaScript.
+    That endpoint serves the same data as JSON.
+  </p>
+</noscript>
 
-<section class="buses">
-  {% for name, b in s.buses.items() %}
-  <article class="bus state-{{ b.state }}">
-    <h2>
-      {{ name }}
-      <span class="state">{{ b.state }}</span>
-      <span class="sink">&rarr; {{ b.sink }}</span>
-    </h2>
-
-    <p class="levels">
-      {{ '%+.1f'|format(b.gain_db) }} dB
-      {%- if b.duck_db %} <span class="ducked">ducked {{ '%+.1f'|format(b.duck_db) }} dB
-        &rarr; {{ '%+.1f'|format(b.effective_db) }} dB</span>{% endif %}
-      {%- if b.resting_open_ended %} <span class="dim">rests open-ended</span>{% endif %}
-      {%- for d in b.ducks %} <span class="dim">ducks {{ d.target }} {{ '%+.0f'|format(d.depth_db) }}dB</span>{% endfor %}
-    </p>
-
-    {% if b.current %}
-    <div class="item current">
-      <span class="label">{{ b.current.label or b.current.id }}</span>
-      <span class="asset">{{ b.current.asset }}</span>
-      <span class="dim">
-        {{ b.current.duration.kind }}
-        {%- if b.current.elapsed_s %} · {{ '%.1f'|format(b.current.elapsed_s) }}s{% endif %}
-        {%- if b.current.total_s %} / {{ '%.1f'|format(b.current.total_s) }}s{% endif %}
-        {%- if b.current.cycles %} · cycle {{ b.current.cycles }}{% endif %}
-        {%- if b.current.treatment != 'clean' %} · {{ b.current.treatment }}{% endif %}
-      </span>
-    </div>
-    {% else %}
-    <div class="item empty">nothing playing</div>
-    {% endif %}
-
-    {% if b.pending %}
-    <ol class="pending">
-      {% for p in b.pending %}
-      <li><span class="label">{{ p.label or p.id }}</span> <span class="asset">{{ p.asset }}</span></li>
-      {% endfor %}
-    </ol>
-    {% endif %}
-
-    {% if b.recent %}
-    <ul class="recent">
-      {% for r in b.recent %}
-      <li class="s-{{ r.state }}">
-        <span class="badge">{{ r.state }}</span>
-        <span class="label">{{ r.label or r.id }}</span>
-        {% if r.note %}<span class="note">{{ r.note }}</span>{% endif %}
-      </li>
-      {% endfor %}
-    </ul>
-    {% endif %}
-  </article>
-  {% endfor %}
-</section>
-
-<section class="sinks">
-  <h2>sinks</h2>
-  <table>
-    {% for name, st in s.sinks.items() %}
-    <tr><th>{{ name }}</th><td>
-      {%- for k, v in st.items() %}{{ k }}={{ v }}{% if not loop.last %} · {% endif %}{% endfor -%}
-    </td></tr>
-    {% endfor %}
-  </table>
-</section>
-
-{% if s.warnings or s.library_warnings %}
-<section class="warnings">
-  <h2>warnings</h2>
-  <ul>
-    {% for w in s.warnings %}
-    <li><span class="badge">{{ w.kind }}</span>
-        <span class="dim">{{ w.bus }} · {{ w.age_s }}s ago</span>
-        {{ w.detail }}</li>
-    {% endfor %}
-    {% for w in s.library_warnings %}
-    <li><span class="badge">library</span> {{ w }}</li>
-    {% endfor %}
-  </ul>
-</section>
-{% endif %}
+<div id="app">
+  <p class="verdict" id="verdict">loading…</p>
+  <section class="buses" id="buses"></section>
+  <section class="sinks" id="sinks" hidden><h2>sinks</h2><table></table></section>
+  <section class="warnings" id="warnings" hidden><h2>warnings</h2><ul></ul></section>
+</div>
 
 <footer>
   <a href="/surface">surface</a> ·
@@ -116,5 +48,7 @@
   <a href="/assets">assets</a> ·
   <a href="/health">health</a>
 </footer>
+
+<script src="/static/status.js"></script>
 </body>
 </html>
