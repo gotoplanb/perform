@@ -262,11 +262,17 @@
     timer = null;
   }
 
-  // A backgrounded tab does not need to poll. Costs nothing and keeps a
-  // forgotten tab from talking to the server all day.
-  document.addEventListener("visibilitychange", function () {
-    if (document.hidden) stop(); else start();
-  });
+  // Deliberately no visibilitychange pause.
+  //
+  // Pausing a backgrounded tab looks like free politeness and is not. It froze
+  // the last render on screen with the chip still reading "live", so the page
+  // showed stale numbers as current — the exact failure this dashboard exists
+  // to catch. Worse, it only half-applied: `visibilitychange` fires on a
+  // transition, so a page *loaded* while hidden never paused at all, and the
+  // behaviour depended on whether the tab happened to be visible at load.
+  //
+  // The saving was one small fetch to loopback every two seconds. Not worth
+  // two failure modes, so the page simply polls while it exists.
 
   start();
 })();
