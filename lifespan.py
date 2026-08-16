@@ -125,6 +125,9 @@ async def lifespan(app: FastAPI):
     # First, before anything can fail — otherwise the startup validation below
     # would abort with its reason going nowhere.
     logs.init_console_logging()
+    # The status page refreshes every 2s; without this its access lines drown
+    # out everything worth reading in the log.
+    logs.quiet_access_logs()
 
     tracing.init_tracing(
         service_name=settings.otel_service_name,
