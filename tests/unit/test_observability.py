@@ -41,7 +41,16 @@ class StubExporter:
 @pytest.fixture(autouse=True)
 def reset_module_state(monkeypatch):
     """These modules are deliberately idempotent via module globals, so each
-    test has to start from a known state."""
+    test has to start from a known state.
+
+    `OTEL_SDK_DISABLED` is cleared for the same reason: `init_tracing` honours it
+    by returning early, so a test asserting the exporter was built reads whatever
+    the ambient environment happens to say. CI sets it to "true" — correctly,
+    there is no collector on a runner — and these tests failed there while
+    passing on every developer machine. A test that depends on ambient env is
+    not a test of the code.
+    """
+    monkeypatch.delenv("OTEL_SDK_DISABLED", raising=False)
     monkeypatch.setattr(tracing, "_initialized", False)
     monkeypatch.setattr(logs, "_initialized", False)
     monkeypatch.setattr(logs, "_console_initialized", False)

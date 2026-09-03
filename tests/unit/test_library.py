@@ -319,25 +319,37 @@ def test_resolve_visual_falls_back_to_copy_when_linking_fails(
     assert resolved.path.read_bytes() == still.read_bytes()
 
 
-def test_eviction_removes_the_file_and_the_row(library, tmp_path):
+def test_eviction_removes_the_file_and_the_row(library):
     """The caller unlinks and then deletes the row, so a failed unlink never
-    leaves a dangling index entry."""
-    source = tmp_path / "big.wav"
-    import numpy as np
-    import soundfile as sf
+    leaves a dangling index entry.
 
-    sf.write(str(source), np.zeros(48_000, dtype="float32"), 48_000, subtype="PCM_16")
-
-    resolved = library.resolve(AssetRef(path=source))
-    blob = library.store.get_blob(resolved.key)
-    assert Path(blob.path).is_file()
+    The blob is seeded directly rather than ingested: this is a test of eviction,
+    and routing it through `resolve` would drag ffmpeg into a unit test for no
+    gain — which is exactly what put ffmpeg-dependent tests in tests/unit/ and
+    broke the no-system-packages CI job.
+    """
+    blob_file = library.blobs_dir / "deadbeef.wav"
+    blob_file.parent.mkdir(parents=True, exist_ok=True)
+    blob_file.write_bytes(b"\x00" * 4096)
+    library.store.upsert_blob(
+        key="deadbeef",
+        path=str(blob_file),
+        media="audio",
+        treatment="clean",
+        duration_s=1.0,
+        sample_rate=48_000,
+        channels=2,
+        size_bytes=4096,
+        pinned=False,
+    )
+    library._pcm["deadbeef"] = object()  # the decoded-PCM cache must drop it too
 
     library.cache_max_bytes = 1
     library._evict_if_over()
 
-    assert library.store.get_blob(resolved.key) is None
-    assert not Path(blob.path).is_file()
-    assert resolved.key not in library._pcm
+    assert library.store.get_blob("deadbeef") is None
+    assert not blob_file.is_file()
+    assert "deadbeef" not in library._pcm
 
 
 def test_eviction_is_a_no_op_when_disabled(library):
