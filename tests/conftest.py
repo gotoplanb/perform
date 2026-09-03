@@ -20,6 +20,7 @@ so a fresh file per test is simpler and just as isolated.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import numpy as np
@@ -32,6 +33,7 @@ from core.bus import Bus, DuckRule
 from core.clock import ManualClock
 from core.engine import Engine
 from core.item import AssetRef, Duration, DurationKind, Item, Media
+from library.ingest import ffmpeg_available
 from library.library import Library
 from library.store import Store
 from sinks.null import NullSink
@@ -40,6 +42,19 @@ from sinks.registry import SinkRegistry
 SAMPLE_RATE = 48_000
 CHANNELS = 2
 BLOCK = 512
+
+
+# Skipping locally is a convenience; skipping in CI is a hole — without ffmpeg
+# the tests that need it would quietly disappear and the run would still report
+# green, claiming coverage of paths nothing exercised.
+#
+# So the skip is conditional on *not* being in CI. On a contributor's machine
+# with no ffmpeg the rest of the suite still runs; on a runner, a missing
+# dependency fails loudly instead of silently shrinking the suite.
+requires_ffmpeg = pytest.mark.skipif(
+    not ffmpeg_available() and not os.environ.get("CI"),
+    reason="ffmpeg is needed here (install it, or set CI=1 to fail instead of skip)",
+)
 
 
 @pytest.fixture

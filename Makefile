@@ -1,4 +1,5 @@
-.PHONY: help install run mcp test lint format coverage reload-buses voices tones clean
+.PHONY: help install install-hooks run mcp test lint format coverage secrets \
+        sonar-scan sonar-gate check reload-buses voices tones clean
 
 help:
 	@echo "Common targets:"
@@ -9,6 +10,10 @@ help:
 	@echo "  make lint          — ruff check"
 	@echo "  make format        — ruff format"
 	@echo "  make coverage      — pytest with coverage, writes coverage.xml"
+	@echo "  make secrets       — scan the tree for committed credentials"
+	@echo "  make check         — the whole local gate: lint + secrets + coverage"
+	@echo "  make install-hooks — install the pre-commit / pre-push gates"
+	@echo "  make sonar-scan    — scan + quality gate against local Watchtower"
 	@echo "  make voices        — list the macOS system voices \`say\` can use"
 	@echo "  make reload-buses  — SIGUSR1 the server to reload config/buses.yaml without a restart"
 	@echo "  make clean         — drop the warm cache (blobs + index). Rebuildable."
@@ -31,9 +36,52 @@ lint:
 format:
 	uv run ruff format .
 
-# Cobertura XML for whatever wants to ingest it, plus a terminal summary.
+# Cobertura XML for SonarQube to ingest, plus a terminal summary. The
+# `fail_under` floor in pyproject.toml is enforced here, so this target is the
+# coverage gate as well as the report.
 coverage:
 	uv run pytest --cov --cov-report=xml --cov-report=term -q
+
+# Scan every tracked + untracked file for credentials. This repo is public, so a
+# leaked token is a real incident and rotating it is the only remedy — removing
+# the line is not enough once it is in history.
+secrets:
+	uv run python scripts/check_secrets.py
+
+# Everything the pre-push hook runs except Sonar, which needs Watchtower up.
+# Handy before opening a pull request, or when a hook was bypassed.
+check: lint secrets coverage
+	@echo "local gate passed"
+
+# Symlink rather than copy, so editing scripts/hooks/* takes effect immediately
+# and the hooks stay in version control where they can be reviewed.
+install-hooks:
+	@mkdir -p .git/hooks
+	@for hook in pre-commit pre-push; do \
+		ln -sf ../../scripts/hooks/$$hook .git/hooks/$$hook; \
+		echo "installed .git/hooks/$$hook -> scripts/hooks/$$hook"; \
+	done
+	@echo "Bypass a gate once with --no-verify."
+
+# Scan against the local Watchtower SonarQube, then wait for the verdict.
+# `sonar-gate` is a separate step because the gate is computed asynchronously
+# after upload: reading it immediately returns the *previous* run's result,
+# which is the kind of green-when-actually-red that makes a gate worse than
+# none at all.
+sonar-scan: coverage
+	@if [ -z "$$SONAR_TOKEN" ] && ! grep -q '^SONAR_TOKEN=' .env 2>/dev/null; then \
+		echo "Set SONAR_TOKEN in .env (generate one at http://localhost:9000)"; exit 1; \
+	fi
+	@set -a; [ -f .env ] && . ./.env; set +a; \
+	docker run --rm \
+		-e SONAR_HOST_URL=http://host.docker.internal:9000 \
+		-e SONAR_TOKEN=$$SONAR_TOKEN \
+		-v "$$(pwd):/usr/src" \
+		sonarsource/sonar-scanner-cli:latest
+	@$(MAKE) --no-print-directory sonar-gate
+
+sonar-gate:
+	@uv run python scripts/sonar_gate.py
 
 # The `say` voices installed on this machine. PERFORM_SAY_VOICE must name one
 # of these exactly; an unknown name fails the boot rather than falling back to

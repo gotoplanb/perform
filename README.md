@@ -129,12 +129,39 @@ The library is a **warm cache, not a build artifact**. Everything — a pack ass
 ## Development
 
 ```bash
-make test        # 198 tests, ~1s. Never opens a device, never makes noise
-make lint
-make coverage
-make voices      # what `say` can do on this machine
-make clean       # drop the warm cache. Rebuildable
+make install-hooks   # wire the quality gate into git — do this first
+make check           # the whole local gate: lint + secret scan + coverage floor
+make test            # 324 tests, ~2s. Never opens a device, never makes noise
+make voices          # what `say` can do on this machine
+make clean           # drop the warm cache. Rebuildable
 ```
+
+### The quality gate
+
+Same shape as [conduct](https://github.com/gotoplanb/conduct) and
+[crossover](https://github.com/gotoplanb/crossover): a fast `pre-commit`, a full
+`pre-push`, and a GitHub Actions run that mirrors the latter so `--no-verify`
+buys a local shortcut rather than an exemption.
+
+| | pre-commit | pre-push | CI |
+|---|---|---|---|
+| secret scan | staged | full tree | full tree |
+| `.env` / media not staged | ✓ | — | — |
+| ruff | staged `.py` | whole tree | whole tree |
+| unit tests | ✓ | — | ✓ (fast job) |
+| full suite + coverage floor | — | ✓ | ✓ |
+| SonarQube gate | — | if reachable | if configured |
+
+Sonar is skipped rather than failed when unreachable — a local observability
+stack being down should not block a push. Set `SONAR_TOKEN` in `.env` to enable
+it against Watchtower.
+
+Two things the gate enforces that are specific to this repo: **the suite must
+never open an audio device or a window** (SPEC §8), and **no media may be
+committed** (SPEC §5 — the tones are synthesized, everything else belongs in a
+gitignored pack). A skipped test is also treated as a failure in CI, because
+eleven surface tests silently vanishing while the run reports green is worse
+than a red build. See [CLAUDE.md](CLAUDE.md) for the standing bar.
 
 The suite runs on a `NullDevice` that renders through the real mix graph and discards the output, and a `NullSink` + `ManualClock` that let sequencing be driven by hand. So mixer tests assert duck envelopes sample-for-sample and engine tests assert ordering exactly, with nothing plugged in and nothing to go flaky under load.
 

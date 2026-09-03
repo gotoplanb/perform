@@ -21,14 +21,13 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-import pytest
-
-from library.ingest import ffmpeg_available
+from tests.conftest import requires_ffmpeg
 from tests.integration.conftest import drain
 
-pytestmark = pytest.mark.skipif(
-    not ffmpeg_available(), reason="ffmpeg is needed to generate the test media"
-)
+# These generate their own media, so they need the real binary. See
+# `requires_ffmpeg` in tests/conftest.py for why this is not an unconditional
+# skip.
+pytestmark = requires_ffmpeg
 
 
 def make_png(path: Path, color: str = "red") -> Path:

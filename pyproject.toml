@@ -80,8 +80,41 @@ asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
 
+[tool.coverage.report]
+# Set one point below the number the suite actually achieves, so a real
+# regression fails the pre-push hook while normal churn does not. Raise it when
+# the number rises; never lower it to make a red run go green.
+#
+# The shortfall to 100 is concentrated in four places, all of them deliberate
+# rather than neglected — see CLAUDE.md for the standing list:
+#   observability/*   OTLP exporter wiring, run once at startup
+#   audio/device.py   the PortAudio half; the suite runs on NullDevice by
+#                     design (SPEC §8) and must never open a real stream
+#   routes/surface.py the SSE generator, which httpx's ASGITransport cannot
+#                     drive — covered instead at the sink (test_visual_sink.py)
+#   library/store.py  eviction branches that need a full cache to reach
+fail_under = 88
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+
 [tool.coverage.run]
 source = ["."]
-omit = [".venv/*", "tests/*", "main.py", "lifespan.py"]
+# Kept in sync with sonar.coverage.exclusions in sonar-project.properties —
+# tests/unit/test_sonar_config.py fails if the two disagree, because a drift
+# there makes the local floor and the Sonar gate argue over the same code.
+omit = [
+    ".venv/*",
+    "tests/*",
+    "main.py",
+    "lifespan.py",
+    # Polls a live SonarQube. Its value is talking to a real server, which is
+    # exactly what a unit test cannot do. Deliberately this one file and not
+    # `scripts/*` — check_secrets.py is a security control and stays measured.
+    "scripts/sonar_gate.py",
+]
 branch = true
 relative_files = true

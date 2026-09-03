@@ -1,0 +1,158 @@
+# Mirrors scripts/hooks/pre-push. Until this existed, the only thing enforcing
+# quality was a *local* git hook: a contributor's pull request was checked by
+# nothing, and `--no-verify` bypassed everything silently.
+#
+# Split into two jobs on purpose. `checks` needs no system packages and finishes
+# in seconds, so a lint slip or a committed secret fails fast instead of waiting
+# behind an apt install.
+#
+# There is no deploy job, unlike crossover's. Perform owns a machine's speakers
+# and opens a PortAudio stream at startup; a cloud runner has neither, and the
+# service is loopback-only by design (SPEC §7). Nothing here deploys anywhere.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # A newer push supersedes an in-flight run on the same ref.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: lint, secrets, unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        # --locked, so CI fails if uv.lock drifts from pyproject.toml rather
+        # than silently resolving something different from what runs locally.
+        run: uv sync --locked --all-groups
+
+      - name: Ruff
+        run: uv run ruff check .
+
+      - name: Secret scan
+        run: uv run python scripts/check_secrets.py
+
+      - name: Unit tests
+        # No audio device and no ffmpeg needed — the mixer runs against
+        # NullDevice and the tones are synthesized numerically, which is what
+        # lets the whole graph be exercised this early (SPEC §8).
+        run: uv run pytest tests/unit -q
+
+  test:
+    name: full suite + coverage
+    runs-on: ubuntu-latest
+    env:
+      # Consumed by tests/integration/test_surface.py: with CI set, a missing
+      # ffmpeg fails those tests instead of skipping them. GitHub sets CI=true
+      # already; naming it here makes the dependency explicit rather than
+      # relying on a runner convention.
+      CI: "true"
+      # Nothing to export to, and an unreachable collector would add a retry
+      # delay to every test that opens a span.
+      OTEL_SDK_DISABLED: "true"
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install ffmpeg
+        # Not optional. The visual-surface tests generate their own media, and
+        # without ffmpeg eleven of them would skip — leaving CI green while
+        # nothing had exercised the surface at all. The CI env var above turns
+        # that silence into a failure; this step is what stops it happening.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -version | head -1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Tests with coverage
+        # `fail_under` lives in pyproject.toml, so the floor is enforced here
+        # without being restated — one place to change it.
+        #
+        # `-rs` reports skip reasons, and the check below turns any skip into a
+        # failure: a skipped test reports the same green as a passing one, and
+        # a dependency quietly going missing on the runner should not read as
+        # success. One run, teed — not three.
+        run: |
+          set -o pipefail
+          uv run pytest -q -rs --cov --cov-report=xml --cov-report=term \
+            | tee /tmp/pytest.out
+          if grep -q '^SKIPPED' /tmp/pytest.out; then
+            echo "::error::tests were skipped in CI — every dependency should be present here"
+            grep '^SKIPPED' /tmp/pytest.out
+            exit 1
+          fi
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: coverage.xml
+          if-no-files-found: warn
+
+  sonar:
+    name: SonarQube quality gate
+    runs-on: ubuntu-latest
+    needs: test
+    # The local Watchtower SonarQube is not reachable from a GitHub runner, so
+    # this runs only once a hosted instance is configured. Skipped rather than
+    # failed while the secrets are absent: a missing optional integration should
+    # not turn every pull request red.
+    if: >-
+      github.event_name == 'push' &&
+      vars.SONAR_HOST_URL != ''
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Sonar wants full history to attribute new code to the right commits.
+          fetch-depth: 0
+
+      - name: Install ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - run: uv sync --locked --all-groups
+
+      - name: Coverage for Sonar
+        env:
+          CI: "true"
+          OTEL_SDK_DISABLED: "true"
+        # `|| true` so a coverage shortfall does not fail this job twice — the
+        # `test` job above already enforces the floor, and Sonar needs the
+        # report to attribute new lines either way.
+        run: uv run pytest -q --cov --cov-report=xml || true
+
+      - name: Scan
+        uses: SonarSource/sonarqube-scan-action@v8
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}

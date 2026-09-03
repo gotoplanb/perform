@@ -1,0 +1,29 @@
+# Dependency updates. Weekly rather than daily: this is a one-person project and
+# a pull request per dependency per day would train everyone to ignore them.
+version: 2
+updates:
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # One pull request for the whole OpenTelemetry family — they release in
+      # lockstep and are meaningless to review individually. The floors are
+      # pinned to match conduct and wander so all three emit one OTLP dialect,
+      # so a bump here is a decision about all three repos.
+      opentelemetry:
+        patterns:
+          - "opentelemetry-*"
+      # numpy / sounddevice / soundfile move together in practice and a break
+      # in any of them shows up as the same symptom: the mixer stops rendering.
+      audio:
+        patterns:
+          - "numpy"
+          - "sounddevice"
+          - "soundfile"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
