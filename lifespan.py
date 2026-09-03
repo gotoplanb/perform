@@ -154,7 +154,7 @@ async def lifespan(app: FastAPI):
     app.state.library = library
     app.state.settings = settings
 
-    _install_reload_handler(app, engine)
+    _install_reload_handler(engine)
 
     log.info(
         "perform ready on http://%s:%d — surface at /surface, status at /ui",
@@ -171,7 +171,7 @@ async def lifespan(app: FastAPI):
         log.info("perform stopped")
 
 
-def _install_reload_handler(app: FastAPI, engine: Engine) -> None:
+def _install_reload_handler(engine: Engine) -> None:
     """SIGUSR1 reloads config/buses.yaml without dropping what is playing.
 
     USR1 and not HUP because uvicorn takes HUP for itself — the same discovery
@@ -211,5 +211,7 @@ def _install_reload_handler(app: FastAPI, engine: Engine) -> None:
     try:
         asyncio.get_running_loop().add_signal_handler(signal.SIGUSR1, _reload)
         log.info("SIGUSR1 handler installed — `make reload-buses` reloads the bus config")
-    except (NotImplementedError, RuntimeError) as e:
+    except RuntimeError as e:
+        # RuntimeError alone: NotImplementedError subclasses it, and that is the
+        # one a loop without signal support raises.
         log.warning("could not install SIGUSR1 handler (%s) — reload unavailable", e)

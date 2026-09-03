@@ -94,7 +94,9 @@ class VisualSink(BaseSink):
         return len(self._subscribers)
 
     def _emit(self, event: dict[str, Any]) -> None:
-        for queue in list(self._subscribers):
+        # No copy needed: this is synchronous end to end, so nothing can
+        # subscribe or unsubscribe midway through.
+        for queue in self._subscribers:
             try:
                 queue.put_nowait(event)
             except asyncio.QueueFull:
@@ -155,6 +157,7 @@ class VisualSink(BaseSink):
         )
 
     async def stop(self, item_id: str | None = None) -> None:
+        # list() is load-bearing: the loop pops from _live as it goes.
         for bus in list(self._live):
             if item_id is None or self._live.get(bus) == item_id:
                 self._live.pop(bus, None)
@@ -166,18 +169,22 @@ class VisualSink(BaseSink):
         self._last_by_bus.pop(bus, None)
         self._emit({"type": "clear", "bus": bus})
 
-    async def report_complete(self, item_id: str, *, natural: bool = True) -> bool:
+    def report_complete(self, item_id: str, *, natural: bool = True) -> bool:
         """Called by `POST /surface/complete` when the page says an item ended.
 
         Returns whether the id was one we were waiting on — a stale report from
         a reconnected tab is normal and must not advance the wrong item.
+
+        Synchronous, like the callback it invokes: the whole out-of-band
+        completion path is bookkeeping over in-memory state, and marking it
+        async would suggest it might block somewhere it must not.
         """
         bus = next((b for b, i in self._live.items() if i == item_id), None)
         if bus is None:
             return False
         self._live.pop(bus, None)
         if self.on_complete is not None:
-            await self.on_complete(bus, item_id, natural)
+            self.on_complete(bus, item_id, natural)
         return True
 
     def status(self) -> dict:

@@ -64,20 +64,23 @@ under `packs/`, which is gitignored.
 
 ## Coverage: what the floor does and does not claim
 
-`fail_under = 88` locks in what the suite achieves and stops regressions. It is
-not a claim that the remaining 11% is untested-by-accident. The shortfall is
-concentrated in four places, each for a stated reason:
+`fail_under = 95` locks in what the suite achieves and stops regressions. Raise
+it when the number rises. Never lower it to make a red run green.
 
-- `observability/*` — OTLP exporter wiring, run once at startup.
-- `audio/device.py` — the `PortAudioDevice` half. Covering it means opening a
-  real stream, which the suite must not do.
-- `routes/surface.py` — the SSE generator. httpx's `ASGITransport` buffers a
-  response body to completion, so an endless generator hangs rather than
-  yielding; the sink beneath it is covered directly in `test_visual_sink.py`,
-  and the wire framing is checked by hand against a real uvicorn.
-- `library/store.py` — eviction branches that need a full cache to reach.
+Two things that looked untestable and were not, in case the instinct recurs:
 
-Raise the floor when the number rises. Never lower it to make a red run green.
+- **`PortAudioDevice`** does not need a sound card. The native import is lazy —
+  `import sounddevice` lives inside `start()` — so a stub in `sys.modules`
+  covers the stream construction, the callback, the xrun counter and teardown.
+  Those are our logic; PortAudio's is not ours to test.
+- **The SSE generator** cannot be driven through httpx's `ASGITransport`, which
+  buffers a response body to completion and so hangs forever on an endless
+  stream. Calling the route and consuming `response.body_iterator` has neither
+  problem. Only the HTTP framing around it is still checked by hand.
+
+What remains uncovered is defensive branches and a few paths that only occur
+under a race. If you are about to write `# pragma: no cover`, say why in the
+same breath — the existing ones all name a reason.
 
 ## Running it
 

@@ -116,3 +116,72 @@ def test_main_returns_zero_on_a_clean_tree():
     """The repo itself must pass, or the hook blocks every commit — including
     this file, which is why the markers above have to work."""
     assert main([]) == 0
+
+
+# --- the CLI ------------------------------------------------------------
+
+
+def test_main_reports_findings_and_exits_nonzero(tmp_path, monkeypatch, capsys):
+    """The hook reads the exit code; the human reads the message. Both matter."""
+    import scripts.check_secrets as mod
+
+    leaky = tmp_path / "config.py"
+    leaky.write_text(f'TOKEN = "{FAKE_CDT}"\n')
+
+    monkeypatch.setattr(mod, "REPO", tmp_path)
+    monkeypatch.setattr(mod, "_tracked_files", lambda staged: [leaky])
+
+    assert mod.main([]) == 1
+
+    err = capsys.readouterr().err
+    assert "config.py:1" in err
+    assert "conduct-client-key" in err
+    # The remedy, not just the diagnosis.
+    assert "rotate it" in err
+    assert ALLOW_MARKER in err
+
+
+def test_main_passes_the_staged_flag_through(tmp_path, monkeypatch):
+    import scripts.check_secrets as mod
+
+    seen = []
+    monkeypatch.setattr(mod, "REPO", tmp_path)
+    monkeypatch.setattr(mod, "_tracked_files", lambda staged: seen.append(staged) or [])
+
+    mod.main(["--staged"])
+    mod.main([])
+    assert seen == [True, False]
+
+
+def test_unreadable_files_are_skipped_not_fatal(tmp_path, monkeypatch):
+    """A binary that slipped past the suffix filter must not crash the hook."""
+    import scripts.check_secrets as mod
+
+    binary = tmp_path / "weird.dat"
+    binary.write_bytes(b"\xff\xfe\x00\x01\x80")
+
+    monkeypatch.setattr(mod, "REPO", tmp_path)
+    monkeypatch.setattr(mod, "_tracked_files", lambda staged: [binary])
+    assert mod.main([]) == 0
+
+
+def test_tracked_files_shells_out_to_git(tmp_path, monkeypatch):
+    import scripts.check_secrets as mod
+
+    calls = []
+
+    class Result:
+        stdout = "a.py\nb.py\n"
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return Result()
+
+    monkeypatch.setattr(mod, "REPO", tmp_path)
+    monkeypatch.setattr(mod.subprocess, "run", fake_run)
+
+    assert [p.name for p in mod._tracked_files(staged_only=False)] == ["a.py", "b.py"]
+    assert "ls-files" in calls[0]
+
+    mod._tracked_files(staged_only=True)
+    assert "--cached" in calls[1] and "diff" in calls[1]

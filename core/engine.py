@@ -63,7 +63,7 @@ COMPLETION_POLL_S = 0.01
 
 
 @dataclass
-class Warning_:
+class StatusWarning:
     """Something an operator should see in `/status`.
 
     SPEC §8: *"Failures visible, never silent. A dropped item, a missing asset
@@ -94,7 +94,7 @@ class Engine:
         self.mixer = mixer
         self.clock = clock or SystemClock()
         self.stall_after_s = stall_after_s
-        self.warnings: list[Warning_] = []
+        self.warnings: list[StatusWarning] = []
         self._warning_limit = warning_limit
 
         self._tasks: list[asyncio.Task] = []
@@ -135,6 +135,15 @@ class Engine:
             for name, bus in self.buses.items()
         ]
         self._tasks.append(asyncio.create_task(self._pump(), name="mixer-pump"))
+
+        # Yield once so every task above actually reaches its first await before
+        # `start()` returns. Without this, `await engine.start()` means "the bus
+        # tasks are scheduled", not "the engine is running" — an item placed
+        # immediately afterwards sits untouched until the caller happens to
+        # yield. The tests were papering over it with manual sleep(0) loops,
+        # which is the tell.
+        await asyncio.sleep(0)
+
         log.info("engine started: %d bus(es) — %s", len(self.buses), ", ".join(self.buses))
 
     async def close(self) -> None:
@@ -235,6 +244,8 @@ class Engine:
     async def stop_all(self) -> int:
         """The panic button. Every bus, every sink, immediately."""
         total = 0
+        # list() is load-bearing: there is an await in the loop, and a
+        # SIGUSR1 reload replaces self.buses wholesale.
         for name in list(self.buses):
             total += await self.stop_bus(name)
         self.mixer.submit(StopAll())
@@ -348,7 +359,7 @@ class Engine:
             waits.append(backstop)
 
         try:
-            done, pending = await asyncio.wait(waits, return_when=asyncio.FIRST_COMPLETED)
+            done, _ = await asyncio.wait(waits, return_when=asyncio.FIRST_COMPLETED)
         finally:
             for task in waits:
                 if not task.done():
@@ -400,53 +411,78 @@ class Engine:
 
         while not self._closing:
             wake.clear()
-            bus.recompute_state(self.clock.now(), self.stall_after_s)
-            if bus.state is BusState.STALLED:
-                self.warn(
-                    bus.name,
-                    "stalled",
-                    f"holding open-ended item {placed.item.label or placed.item.id!r} for "
-                    f"{self.clock.now() - (bus.resting_since or 0):.0f}s — bus {bus.name!r} is "
-                    f"not declared resting_open_ended, so this is a hung lane, not a steady state",
-                )
-
-            waits = [
-                asyncio.ensure_future(asyncio.shield(waiter)),
-                asyncio.ensure_future(wake.wait()),
-            ]
-            try:
-                await asyncio.wait(waits, return_when=asyncio.FIRST_COMPLETED)
-            finally:
-                for task in waits:
-                    if not task.done():
-                        task.cancel()
+            self._check_stalled(bus, placed)
+            await self._wait_for_either(waiter, wake)
 
             if waiter.done():
-                natural = waiter.result()
-                placed.state = ItemState.PLAYED if natural else ItemState.STOPPED
-                placed.ended_at = self.clock.now()
-                bus.resting_since = None
-                span.set_attribute(tracing.OUTCOME, "played" if natural else "stopped")
-                if not natural:
-                    self.warn(
-                        bus.name,
-                        "sink",
-                        f"{placed.item.label or placed.item.id}: sink reported a failure on an "
-                        f"open-ended item — advancing the bus rather than holding it",
-                    )
+                self._end_hold_on_signal(bus, placed, waiter.result(), span)
                 return
-
             if bus.name in self._stopping:
-                placed.state = ItemState.STOPPED
-                placed.ended_at = self.clock.now()
-                span.set_attribute(tracing.OUTCOME, "stopped")
+                self._finish(placed, ItemState.STOPPED, span, "stopped")
                 return
             if bus.next_pending() is not None:
-                placed.state = ItemState.PLAYED
-                placed.ended_at = self.clock.now()
+                # Something is queued behind it: that is the "replaced" in
+                # until_replaced.
+                self._finish(placed, ItemState.PLAYED, span, "replaced")
                 bus.resting_since = None
-                span.set_attribute(tracing.OUTCOME, "replaced")
                 return
+
+    def _check_stalled(self, bus: Bus, placed: PlacedItem) -> None:
+        """Report a lane that is holding open-ended when it should not be."""
+        bus.recompute_state(self.clock.now(), self.stall_after_s)
+        if bus.state is not BusState.STALLED:
+            return
+        self.warn(
+            bus.name,
+            "stalled",
+            f"holding open-ended item {placed.item.label or placed.item.id!r} for "
+            f"{self.clock.now() - (bus.resting_since or 0):.0f}s — bus {bus.name!r} is "
+            f"not declared resting_open_ended, so this is a hung lane, not a steady state",
+        )
+
+    async def _wait_for_either(
+        self, waiter: asyncio.Future[bool], wake: asyncio.Event
+    ) -> None:
+        """Block until the sink reports or someone touches the bus.
+
+        `shield` because the waiter outlives this call — it is resolved by the
+        completion pump and must survive the cancellation below.
+        """
+        waits = [
+            asyncio.ensure_future(asyncio.shield(waiter)),
+            asyncio.ensure_future(wake.wait()),
+        ]
+        try:
+            await asyncio.wait(waits, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            for task in waits:
+                if not task.done():
+                    task.cancel()
+
+    def _end_hold_on_signal(
+        self, bus: Bus, placed: PlacedItem, natural: bool, span
+    ) -> None:
+        """A sink reported completion on an item that cannot complete.
+
+        Nothing ends an open-ended item naturally, so a signal here always means
+        something went wrong — the page failed to decode, or the tab went away.
+        Advancing is still right; staying silent about it is not.
+        """
+        self._finish(placed, ItemState.PLAYED if natural else ItemState.STOPPED, span,
+                     "played" if natural else "stopped")
+        bus.resting_since = None
+        if not natural:
+            self.warn(
+                bus.name,
+                "sink",
+                f"{placed.item.label or placed.item.id}: sink reported a failure on an "
+                f"open-ended item — advancing the bus rather than holding it",
+            )
+
+    def _finish(self, placed: PlacedItem, state: ItemState, span, outcome: str) -> None:
+        placed.state = state
+        placed.ended_at = self.clock.now()
+        span.set_attribute(tracing.OUTCOME, outcome)
 
     async def _sleep_until_work(self, bus: Bus) -> None:
         event = self._wake[bus.name]
@@ -466,9 +502,16 @@ class Engine:
                 self._resolve(completion.item_id, completion.natural)
             await asyncio.sleep(COMPLETION_POLL_S)
 
-    async def _on_sink_complete(self, bus: str, item_id: str, natural: bool) -> None:
+    def _on_sink_complete(self, bus: str, item_id: str, natural: bool) -> None:
         """Completion from a sink that signals out of band — the browser posting
-        back, or a test."""
+        back, or a test.
+
+        Deliberately synchronous. It resolves a future and nothing else, and a
+        completion handler that awaited something could stall the sink that
+        called it — the visual sink invokes this from inside its own request
+        handling. Declaring it sync makes "must not block" structural instead of
+        a convention nobody can see.
+        """
         self._resolve(item_id, natural)
 
     def _resolve(self, item_id: str, natural: bool) -> None:
@@ -488,7 +531,7 @@ class Engine:
     # --- reporting ------------------------------------------------------
 
     def warn(self, bus: str, kind: str, detail: str) -> None:
-        self.warnings.append(Warning_(at=self.clock.now(), bus=bus, kind=kind, detail=detail))
+        self.warnings.append(StatusWarning(at=self.clock.now(), bus=bus, kind=kind, detail=detail))
         del self.warnings[: max(0, len(self.warnings) - self._warning_limit)]
 
     def status(self) -> dict:

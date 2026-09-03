@@ -38,11 +38,11 @@ async def test_items_play_in_order(engine, null_sink):
     # Serial: only the first has been dispatched.
     assert null_sink.order == ["first"]
 
-    await null_sink.complete()
+    null_sink.complete()
     await settle()
     assert null_sink.order == ["first", "second"]
 
-    await null_sink.complete()
+    null_sink.complete()
     await settle()
     assert null_sink.order == ["first", "second", "third"]
 
@@ -59,7 +59,7 @@ async def test_buses_run_concurrently(engine, null_sink):
 async def test_a_finished_item_is_marked_played(engine, null_sink):
     placed = engine.place(item(label="line"))
     await settle()
-    await null_sink.complete()
+    null_sink.complete()
     await settle()
 
     assert placed.state is ItemState.PLAYED
@@ -77,7 +77,7 @@ async def test_a_pending_item_can_be_replaced_in_place(engine, null_sink):
     await settle()
 
     engine.replace(placeholder.item.id, item(label="the real line"))
-    await null_sink.complete()
+    null_sink.complete()
     await settle()
 
     assert null_sink.order == ["playing", "the real line"]
@@ -111,7 +111,7 @@ async def test_a_pending_item_can_be_removed(engine, null_sink):
     await settle()
 
     engine.remove("voice", doomed.item.id)
-    await null_sink.complete()
+    null_sink.complete()
     await settle()
 
     assert null_sink.order == ["playing", "after"]
@@ -243,7 +243,7 @@ async def test_an_open_ended_item_yields_when_the_sink_reports_a_failure(
     await settle()
     assert held.state is ItemState.PLAYING
 
-    await null_sink.complete(natural=False)
+    null_sink.complete(natural=False)
     await settle()
 
     assert held.state is ItemState.STOPPED
@@ -254,7 +254,7 @@ async def test_an_open_ended_item_that_completes_naturally_is_played(engine, nul
     held = engine.place(item(bus="ambience", label="bed", kind=DurationKind.UNTIL_REPLACED))
     await settle()
 
-    await null_sink.complete(natural=True)
+    null_sink.complete(natural=True)
     await settle()
 
     assert held.state is ItemState.PLAYED
@@ -305,7 +305,7 @@ async def test_a_refused_item_is_dropped_and_reported(engine, null_sink):
     engine.place(item(label="refused"))
     engine.place(item(label="after"))
     await settle()
-    await null_sink.complete()
+    null_sink.complete()
     await settle()
 
     _, refused = engine.find_item(

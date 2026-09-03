@@ -79,7 +79,7 @@ class NullSink(BaseSink):
                 return rec
         return None
 
-    async def complete(self, item_id: str | None = None, *, natural: bool = True) -> None:
+    def complete(self, item_id: str | None = None, *, natural: bool = True) -> None:
         """Signal that an item finished. `None` completes the oldest live one.
 
         This is the seam: real sinks report completion when a buffer runs out or
@@ -92,7 +92,7 @@ class NullSink(BaseSink):
             return
         rec.completed = True
         if self.on_complete is not None:
-            await self.on_complete(rec.item.bus, rec.item.id, natural)
+            self.on_complete(rec.item.bus, rec.item.id, natural)
 
     def status(self) -> dict:
         return {

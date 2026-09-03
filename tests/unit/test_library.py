@@ -7,6 +7,8 @@ ship them that way rather than committing a folder of wavs.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from core.errors import UnknownAsset
@@ -90,8 +92,6 @@ def test_an_already_normalized_blob_is_not_re_ingested(library):
     because the AIFF is deleted straight after. Resolving that path used to
     hash the WAV, land on a different key, and run ffmpeg again — a duplicate
     cache entry for every single utterance."""
-    from pathlib import Path
-
     first = library.resolve(AssetRef(key="tone.ok"))
     blob_path = Path(library.store.get_blob(first.key).path)
     before = len(list(library.blobs_dir.glob("*.wav")))
@@ -106,8 +106,6 @@ def test_an_already_normalized_blob_is_not_re_ingested(library):
 def test_a_path_outside_the_cache_is_still_ingested_normally(library, tmp_path):
     """The short-circuit must be narrow — only a file sitting under blobs_dir
     under its own key is known to be normalized already."""
-    from pathlib import Path
-
     stray = library.blobs_dir / "not-a-key.wav"
     stray.parent.mkdir(parents=True, exist_ok=True)
     stray.write_bytes(b"not a real wav")
@@ -197,3 +195,161 @@ def test_blob_path_refuses_traversal(library):
 def test_blob_path_refuses_a_name_that_does_not_exist(library):
     with pytest.raises(UnknownAsset):
         library.blob_path("deadbeef.png")
+
+
+# --- packs, visuals, and eviction --------------------------------------
+
+
+def test_bootstrap_registers_pack_names(library, tmp_path):
+    """Dropping a folder in is the whole install (SPEC §5)."""
+    from library.packs import CURRENT_SCHEMA_VERSION
+
+    pack = library.packs_dir / "ops-bridge"
+    pack.mkdir(parents=True, exist_ok=True)
+    (pack / "greeting.wav").write_bytes(b"RIFF....WAVEfmt ")
+    (pack / "pack.toml").write_text(
+        f'schema_version = {CURRENT_SCHEMA_VERSION}\n'
+        'id = "ops-bridge"\n\n'
+        '[assets."sre.greeting"]\n'
+        'file = "greeting.wav"\n'
+        'media = "audio"\n'
+        'aliases = ["sre.hello"]\n'
+    )
+
+    library.bootstrap()
+
+    names = {row.name for row in library.store.list_names(pack="ops-bridge")}
+    assert names == {"ops-bridge.sre.greeting", "ops-bridge.sre.hello"}
+
+
+def test_a_rescan_forgets_a_dropped_asset(library):
+    """A pack whose manifest dropped an asset should stop resolving it, not
+    keep a stale row alive."""
+    from library.packs import CURRENT_SCHEMA_VERSION
+
+    pack = library.packs_dir / "p"
+    pack.mkdir(parents=True, exist_ok=True)
+    (pack / "a.wav").write_bytes(b"RIFF")
+    manifest = pack / "pack.toml"
+
+    def write(keys):
+        body = f"schema_version = {CURRENT_SCHEMA_VERSION}\nid = \"p\"\n\n"
+        for k in keys:
+            body += f'[assets."{k}"]\nfile = "a.wav"\nmedia = "audio"\n\n'
+        manifest.write_text(body)
+
+    write(["one", "two"])
+    library.bootstrap()
+    assert len(library.store.list_names(pack="p")) == 2
+
+    write(["one"])
+    library.bootstrap()
+    assert [r.name for r in library.store.list_names(pack="p")] == ["p.one"]
+
+
+def test_resolving_a_visual_as_audio_is_refused(library, tmp_path):
+    """Audio and video stay separate (SPEC §4), and the message says which sink
+    the caller wanted."""
+    from core.errors import AssetError
+
+    still = tmp_path / "still.png"
+    still.write_bytes(b"\x89PNG\r\n\x1a\n")
+    library.store.upsert_name(
+        name="scene.bridge", pack="p", media="image", source_path=str(still)
+    )
+
+    with pytest.raises(AssetError, match="not audio"):
+        library.resolve(AssetRef(key="scene.bridge"))
+
+
+def test_resolving_audio_as_a_visual_is_refused(library):
+    from core.errors import AssetError
+
+    with pytest.raises(AssetError, match="is audio"):
+        library.resolve_visual(AssetRef(key="tone.ok"))
+
+
+def test_resolve_visual_links_into_the_blob_dir(library, tmp_path):
+    """Linking rather than serving originals in place is what lets /media
+    enforce a single rule: it must resolve under the blob directory."""
+    still = tmp_path / "outside.png"
+    still.write_bytes(b"\x89PNG\r\n\x1a\npixels")
+    library.store.upsert_name(
+        name="scene.bridge", pack="p", media="image", source_path=str(still)
+    )
+
+    resolved = library.resolve_visual(AssetRef(key="scene.bridge"))
+
+    assert resolved.path.parent == library.blobs_dir / "visual"
+    assert resolved.url_path.startswith("/media/")
+    assert resolved.path.read_bytes() == still.read_bytes()
+    # And the media route will now serve it.
+    assert library.blob_path(resolved.url_path.removeprefix("/media/")) == resolved.path
+
+
+def test_resolve_visual_is_idempotent(library, tmp_path):
+    still = tmp_path / "s.png"
+    still.write_bytes(b"\x89PNG\r\n\x1a\n")
+    library.store.upsert_name(
+        name="s", pack="p", media="image", source_path=str(still)
+    )
+    first = library.resolve_visual(AssetRef(key="s"))
+    second = library.resolve_visual(AssetRef(key="s"))
+    assert first.key == second.key
+    assert first.path == second.path
+
+
+def test_resolve_visual_falls_back_to_copy_when_linking_fails(
+    library, tmp_path, monkeypatch
+):
+    """A packs directory on another filesystem cannot be hardlinked into the
+    blob dir."""
+    still = tmp_path / "s.png"
+    still.write_bytes(b"\x89PNG\r\n\x1a\n")
+    library.store.upsert_name(
+        name="s", pack="p", media="image", source_path=str(still)
+    )
+
+    def refuse(self, target):
+        raise OSError("cross-device link")
+
+    monkeypatch.setattr(Path, "hardlink_to", refuse)
+
+    resolved = library.resolve_visual(AssetRef(key="s"))
+    assert resolved.path.read_bytes() == still.read_bytes()
+
+
+def test_eviction_removes_the_file_and_the_row(library, tmp_path):
+    """The caller unlinks and then deletes the row, so a failed unlink never
+    leaves a dangling index entry."""
+    source = tmp_path / "big.wav"
+    import numpy as np
+    import soundfile as sf
+
+    sf.write(str(source), np.zeros(48_000, dtype="float32"), 48_000, subtype="PCM_16")
+
+    resolved = library.resolve(AssetRef(path=source))
+    blob = library.store.get_blob(resolved.key)
+    assert Path(blob.path).is_file()
+
+    library.cache_max_bytes = 1
+    library._evict_if_over()
+
+    assert library.store.get_blob(resolved.key) is None
+    assert not Path(blob.path).is_file()
+    assert resolved.key not in library._pcm
+
+
+def test_eviction_is_a_no_op_when_disabled(library):
+    library.cache_max_bytes = 0
+    library._evict_if_over()  # must not raise or delete anything
+    assert library.store.get_blob(library.resolve(AssetRef(key="tone.ok")).key)
+
+
+def test_human_bytes_scales():
+    from library.library import _human_bytes
+
+    assert _human_bytes(500).endswith("B")
+    assert _human_bytes(2048).endswith("KB")
+    assert _human_bytes(5 * 1024 * 1024).endswith("MB")
+    assert _human_bytes(3 * 1024 * 1024 * 1024).endswith("GB")

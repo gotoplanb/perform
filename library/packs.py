@@ -135,46 +135,80 @@ def load_pack(root: Path) -> Pack:
     if not isinstance(raw_assets, dict) or not raw_assets:
         raise ValueError(f"{root.name}/{MANIFEST_NAME}: [assets] must be a non-empty table")
 
+    assets = _build_assets(raw_assets, pack_id=pack_id, root=root)
+
+    return Pack(
+        id=pack_id,
+        root=root,
+        assets=assets,
+        schema_version=schema_version,
+    )
+
+
+def _asset_file(entry: dict, key: str, root: Path) -> Path:
+    """Resolve one asset's file, refusing anything that leaves the pack.
+
+    A manifest is user-supplied content, and `file = "../../etc/passwd"` should
+    be a startup error rather than a served file.
+    """
+    file_path = (root / entry["file"]).resolve()
+    if not file_path.is_relative_to(root.resolve()):
+        raise ValueError(
+            f"{root.name}/{MANIFEST_NAME}: asset {key!r} file {entry['file']!r} "
+            f"escapes the pack directory"
+        )
+    if not file_path.is_file():
+        raise ValueError(
+            f"{root.name}/{MANIFEST_NAME}: asset {key!r} file {entry['file']!r} not found"
+        )
+    return file_path
+
+
+def _validate_entry(entry: object, key: str, root: Path) -> str:
+    """Check one [assets."key"] table and return its declared media type."""
+    if not isinstance(entry, dict):
+        raise ValueError(f"{root.name}/{MANIFEST_NAME}: asset {key!r} must be a table")
+
+    missing = {"file", "media"} - entry.keys()
+    if missing:
+        raise ValueError(
+            f"{root.name}/{MANIFEST_NAME}: asset {key!r} missing {sorted(missing)} "
+            f"— media is required from schema_version 1 and is never inferred"
+        )
+
+    media = entry["media"]
+    if media not in VALID_MEDIA:
+        raise ValueError(
+            f"{root.name}/{MANIFEST_NAME}: asset {key!r} media {media!r} "
+            f"not in {sorted(VALID_MEDIA)}"
+        )
+    return media
+
+
+def _claim(name: str, seen: set[str], root: Path) -> None:
+    """Reserve a namespaced asset name, or say which one collided."""
+    if name in seen:
+        raise ValueError(f"{root.name}/{MANIFEST_NAME}: duplicate asset name {name!r}")
+    seen.add(name)
+
+
+def _build_assets(raw_assets: dict, *, pack_id: str, root: Path) -> tuple[PackAsset, ...]:
+    """Turn the manifest's [assets] table into validated, namespaced entries.
+
+    Split out of `load_pack` so that function reads as the sequence of checks it
+    is — manifest, version, id, assets — rather than one long body where the
+    per-asset rules bury the per-pack ones.
+    """
     assets: list[PackAsset] = []
     seen: set[str] = set()
 
     for key, entry in raw_assets.items():
-        _validate_key(key, pack_id, root)
-        if not isinstance(entry, dict):
-            raise ValueError(f"{root.name}/{MANIFEST_NAME}: asset {key!r} must be a table")
-
-        entry_missing = {"file", "media"} - entry.keys()
-        if entry_missing:
-            raise ValueError(
-                f"{root.name}/{MANIFEST_NAME}: asset {key!r} missing {sorted(entry_missing)} "
-                f"— media is required from schema_version 1 and is never inferred"
-            )
-
-        media = entry["media"]
-        if media not in VALID_MEDIA:
-            raise ValueError(
-                f"{root.name}/{MANIFEST_NAME}: asset {key!r} media {media!r} "
-                f"not in {sorted(VALID_MEDIA)}"
-            )
-
-        # Resolve inside the pack and confirm it stayed there — a manifest is
-        # user-supplied content, and `file = "../../etc/passwd"` should be a
-        # startup error rather than a served file.
-        file_path = (root / entry["file"]).resolve()
-        if not file_path.is_relative_to(root.resolve()):
-            raise ValueError(
-                f"{root.name}/{MANIFEST_NAME}: asset {key!r} file {entry['file']!r} "
-                f"escapes the pack directory"
-            )
-        if not file_path.is_file():
-            raise ValueError(
-                f"{root.name}/{MANIFEST_NAME}: asset {key!r} file {entry['file']!r} not found"
-            )
+        _validate_key(key, root)
+        media = _validate_entry(entry, key, root)
+        file_path = _asset_file(entry, key, root)
 
         full = f"{pack_id}.{key}"
-        if full in seen:
-            raise ValueError(f"{root.name}/{MANIFEST_NAME}: duplicate asset name {full!r}")
-        seen.add(full)
+        _claim(full, seen, root)
         assets.append(
             PackAsset(name=full, pack=pack_id, media=Media(media), path=file_path)
         )
@@ -183,13 +217,9 @@ def load_pack(root: Path) -> Pack:
         # reference assets by name, renaming breaks saved scenes, and an alias
         # is the only non-breaking way out.
         for alias in entry.get("aliases", []):
-            _validate_key(alias, pack_id, root)
+            _validate_key(alias, root)
             full_alias = f"{pack_id}.{alias}"
-            if full_alias in seen:
-                raise ValueError(
-                    f"{root.name}/{MANIFEST_NAME}: duplicate asset name {full_alias!r}"
-                )
-            seen.add(full_alias)
+            _claim(full_alias, seen, root)
             assets.append(
                 PackAsset(
                     name=full_alias,
@@ -200,15 +230,10 @@ def load_pack(root: Path) -> Pack:
                 )
             )
 
-    return Pack(
-        id=pack_id,
-        root=root,
-        assets=tuple(sorted(assets, key=lambda a: a.name)),
-        schema_version=schema_version,
-    )
+    return tuple(sorted(assets, key=lambda a: a.name))
 
 
-def _validate_key(key: str, pack_id: str, root: Path) -> None:
+def _validate_key(key: str, root: Path) -> None:
     if not _ASSET_KEY.match(key):
         raise ValueError(
             f"{root.name}/{MANIFEST_NAME}: asset key {key!r} must be lowercase "

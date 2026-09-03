@@ -117,7 +117,14 @@ class ClaudeSink(BaseSink):
             (p for p in self._pending if p["item_id"] != item_id), maxlen=BUFFER_DEPTH
         )
 
-    async def stop_bus(self, bus: str) -> None:
+    async def stop_bus(self, _bus: str) -> None:
+        """Clear the whole buffer regardless of which bus asked.
+
+        The parameter is part of the interface the engine calls and cannot be
+        dropped, but it is genuinely unused: this sink holds one buffer for the
+        conversation rather than one per bus, because a chat has no lanes.
+        Underscored so that is a statement rather than an oversight.
+        """
         await self.stop()
 
     # --- pull -----------------------------------------------------------

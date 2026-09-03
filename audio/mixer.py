@@ -130,6 +130,25 @@ class BusVoice:
         return self.source is not None and not self.source.finished
 
 
+def _deepest_duck(
+    target: str, active: list[BusVoice]
+) -> tuple[float, DuckRule | None]:
+    """The deepest duck any currently-sounding bus applies to `target`.
+
+    Deepest rather than the sum: two -12dB ducks meaning -24dB would be a
+    surprise every time. Returns (0.0, None) when nothing is ducking it.
+    """
+    deepest = 0.0
+    rule: DuckRule | None = None
+    for ducker in active:
+        if ducker.name == target:
+            continue  # a bus never ducks itself
+        for candidate in ducker.ducks:
+            if candidate.target == target and candidate.depth_db < deepest:
+                deepest, rule = candidate.depth_db, candidate
+    return deepest, rule
+
+
 class Mixer:
     def __init__(self, *, sample_rate: int, channels: int, block_size: int) -> None:
         self.sample_rate = sample_rate
@@ -177,6 +196,7 @@ class Mixer:
         for voice in self._voices.values():
             block = np.zeros((frames, self.channels), dtype=np.float32)
 
+            # list() is load-bearing: finished sources are removed below.
             for src in list(voice.outgoing):
                 block += src.read(frames)
                 if src.finished:
@@ -222,35 +242,38 @@ class Mixer:
         )
 
     def _apply_commands(self) -> None:
+        """Drain the command deque. One dispatch, three handlers."""
         while self._commands:
             cmd = self._commands.popleft()
-
             if isinstance(cmd, Configure):
-                for name, gain in cmd.gains.items():
-                    voice = self._voices.setdefault(name, BusVoice(name=name))
-                    voice.gain_db = gain
-                    voice.ducks = cmd.ducks.get(name, [])
-                # A bus that vanished from the config keeps playing what it has
-                # but stops accepting work; the engine refuses to route to it.
-                for gone in set(self._voices) - set(cmd.gains):
-                    self._voices[gone].ducks = []
-                continue
-
-            if isinstance(cmd, StopAll):
+                self._reconfigure(cmd)
+            elif isinstance(cmd, StopAll):
                 for voice in self._voices.values():
                     self._stop_voice(voice, cmd.fade_ms)
-                continue
+            else:
+                self._apply_to_bus(cmd)
 
-            voice = self._voices.get(cmd.bus)
-            if voice is None:
-                continue  # unknown bus: rejected at the API long before here
+    def _reconfigure(self, cmd: Configure) -> None:
+        for name, gain in cmd.gains.items():
+            voice = self._voices.setdefault(name, BusVoice(name=name))
+            voice.gain_db = gain
+            voice.ducks = cmd.ducks.get(name, [])
+        # A bus that vanished from the config keeps playing what it has but
+        # stops accepting work; the engine refuses to route to it.
+        for gone in set(self._voices) - set(cmd.gains):
+            self._voices[gone].ducks = []
 
-            if isinstance(cmd, SetGain):
-                voice.gain_db = cmd.gain_db
-            elif isinstance(cmd, Stop):
-                self._stop_voice(voice, cmd.fade_ms)
-            elif isinstance(cmd, Start):
-                self._start(voice, cmd)
+    def _apply_to_bus(self, cmd: Start | Stop | SetGain) -> None:
+        voice = self._voices.get(cmd.bus)
+        if voice is None:
+            return  # unknown bus: rejected at the API long before here
+
+        if isinstance(cmd, SetGain):
+            voice.gain_db = cmd.gain_db
+        elif isinstance(cmd, Stop):
+            self._stop_voice(voice, cmd.fade_ms)
+        elif isinstance(cmd, Start):
+            self._start(voice, cmd)
 
     def _stop_voice(self, voice: BusVoice, fade_ms: float) -> None:
         if voice.waiting is not None:
@@ -310,28 +333,31 @@ class Mixer:
 
         for voice in self._voices.values():
             voice.prev_duck_db = voice.duck_db
-            deepest = 0.0
-            rule: DuckRule | None = None
-            for ducker in active:
-                if ducker.name == voice.name:
-                    continue
-                for r in ducker.ducks:
-                    if r.target == voice.name and r.depth_db < deepest:
-                        deepest, rule = r.depth_db, r
+            deepest, rule = _deepest_duck(voice.name, active)
             voice.duck_target_db = deepest
             if rule is not None:
                 voice.last_rule = rule
+            self._ramp_duck(voice, deepest, rule)
 
-            timing = rule or voice.last_rule
-            if timing is None:
-                voice.duck_db = deepest
-                continue
+    def _ramp_duck(
+        self, voice: BusVoice, deepest: float, rule: DuckRule | None
+    ) -> None:
+        """Move one bus's duck level toward its target for this block.
 
-            # Going down is attack, coming back up is release. Ramping in dB is
-            # what makes the recovery sound natural rather than lurching.
-            ms = timing.attack_ms if deepest < voice.duck_db else timing.release_ms
-            step = ramp_step_db(timing.depth_db, ms, self.block_ms)
-            voice.duck_db = approach_db(voice.duck_db, deepest, step)
+        `last_rule` is remembered so a *release* uses the timing of the rule that
+        applied the duck — by the time a bus is recovering, the rule that ducked
+        it is no longer active and would otherwise be unavailable.
+        """
+        timing = rule or voice.last_rule
+        if timing is None:
+            voice.duck_db = deepest
+            return
+
+        # Going down is attack, coming back up is release. Ramping in dB is what
+        # makes the recovery sound natural rather than lurching.
+        ms = timing.attack_ms if deepest < voice.duck_db else timing.release_ms
+        step = ramp_step_db(timing.depth_db, ms, self.block_ms)
+        voice.duck_db = approach_db(voice.duck_db, deepest, step)
 
     def _publish(self) -> None:
         self.snapshot = {

@@ -131,7 +131,7 @@ The library is a **warm cache, not a build artifact**. Everything — a pack ass
 ```bash
 make install-hooks   # wire the quality gate into git — do this first
 make check           # the whole local gate: lint + secret scan + coverage floor
-make test            # 324 tests, ~2s. Never opens a device, never makes noise
+make test            # 453 tests, ~4s. Never opens a device, never makes noise
 make voices          # what `say` can do on this machine
 make clean           # drop the warm cache. Rebuildable
 ```

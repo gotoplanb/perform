@@ -85,15 +85,12 @@ testpaths = ["tests"]
 # regression fails the pre-push hook while normal churn does not. Raise it when
 # the number rises; never lower it to make a red run go green.
 #
-# The shortfall to 100 is concentrated in four places, all of them deliberate
-# rather than neglected — see CLAUDE.md for the standing list:
-#   observability/*   OTLP exporter wiring, run once at startup
-#   audio/device.py   the PortAudio half; the suite runs on NullDevice by
-#                     design (SPEC §8) and must never open a real stream
-#   routes/surface.py the SSE generator, which httpx's ASGITransport cannot
-#                     drive — covered instead at the sink (test_visual_sink.py)
-#   library/store.py  eviction branches that need a full cache to reach
-fail_under = 88
+# What is left uncovered is genuinely hard rather than merely skipped: a few
+# defensive branches, and the parts of the mixer and engine that only occur
+# under a race. Everything that looked untestable at first turned out not to
+# be — the PortAudio device via a stubbed `sounddevice`, the SSE generator by
+# consuming `body_iterator` directly rather than through ASGITransport.
+fail_under = 95
 exclude_lines = [
     "pragma: no cover",
     "raise NotImplementedError",

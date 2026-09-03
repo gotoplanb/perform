@@ -144,36 +144,7 @@ class Source:
             return np.zeros((frames, self.channels), dtype=np.float32)
 
         out = np.zeros((frames, self.channels), dtype=np.float32)
-        written = 0
-        n = len(self.pcm)
-
-        while written < frames:
-            if n == 0:
-                self.finished = True
-                break
-
-            remaining_in_budget = frames - written
-            if self.frames_budget is not None:
-                left = self.frames_budget - self.frames_emitted - written
-                if left <= 0:
-                    self.finished = True
-                    break
-                remaining_in_budget = min(remaining_in_budget, left)
-
-            take = min(remaining_in_budget, n - self.playhead)
-            out[written : written + take] = self.pcm[self.playhead : self.playhead + take]
-            written += take
-            self.playhead += take
-
-            if self.playhead >= n:
-                self.cycles_done += 1
-                self.playhead = 0
-                if not self.loops or (
-                    self.max_cycles is not None and self.cycles_done >= self.max_cycles
-                ):
-                    self.finished = True
-                    break
-
+        written = self._fill(out, frames)
         self.frames_emitted += written
 
         out *= self.envelope.take(frames, self.channels)
@@ -183,3 +154,59 @@ class Source:
                 self.finished = True
 
         return out
+
+    def _fill(self, out: np.ndarray, frames: int) -> int:
+        """Copy source samples into `out`, looping as the duration policy says.
+
+        Returns how many frames were written; the rest of `out` stays zero.
+        Split from `read` so that function is just "fill, then apply envelopes",
+        and the loop-boundary bookkeeping lives in one place.
+        """
+        written = 0
+        n = len(self.pcm)
+        if n == 0:
+            self.finished = True
+            return 0
+
+        while written < frames:
+            available = self._remaining_this_block(frames - written, written)
+            if available <= 0:
+                self.finished = True
+                break
+
+            take = min(available, n - self.playhead)
+            out[written : written + take] = self.pcm[self.playhead : self.playhead + take]
+            written += take
+            self.playhead += take
+
+            if self.playhead >= n and self._complete_cycle():
+                break
+
+        return written
+
+    def _remaining_this_block(self, wanted: int, written: int) -> int:
+        """How many more frames this block may emit.
+
+        Bounded by a `declared` duration's frame budget, where there is one —
+        that is what makes "a still held for a stated interval" work for audio
+        as well as for images.
+        """
+        if self.frames_budget is None:
+            return wanted
+        left = self.frames_budget - self.frames_emitted - written
+        return min(wanted, left)
+
+    def _complete_cycle(self) -> bool:
+        """Wrap the playhead at the end of the buffer. True if that ends the item.
+
+        `intrinsic` stops after one pass, `repeat` after N, and `until_replaced`
+        never — which is the whole of the duration model, in three lines.
+        """
+        self.cycles_done += 1
+        self.playhead = 0
+        ended = not self.loops or (
+            self.max_cycles is not None and self.cycles_done >= self.max_cycles
+        )
+        if ended:
+            self.finished = True
+        return ended

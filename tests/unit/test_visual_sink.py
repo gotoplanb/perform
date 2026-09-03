@@ -186,14 +186,14 @@ async def test_a_slow_subscriber_drops_the_oldest_not_the_newest(sink):
 async def test_completion_from_the_page_is_routed_to_the_engine(sink):
     seen: list[tuple[str, str, bool]] = []
 
-    async def on_complete(bus, item_id, natural):
+    def on_complete(bus, item_id, natural):
         seen.append((bus, item_id, natural))
 
     sink.on_complete = on_complete
     it = visual_item()
     await sink.start(it)
 
-    accepted = await sink.report_complete(it.id)
+    accepted = sink.report_complete(it.id)
     assert accepted is True
     assert seen == [("backdrop", it.id, True)]
 
@@ -203,27 +203,27 @@ async def test_a_stale_completion_is_ignored_not_misrouted(sink):
     advancing the wrong item would be worse than doing nothing."""
     seen = []
 
-    async def on_complete(bus, item_id, natural):
+    def on_complete(bus, item_id, natural):
         seen.append(item_id)
 
     sink.on_complete = on_complete
     await sink.start(visual_item())
 
-    assert await sink.report_complete("some-old-id") is False
+    assert sink.report_complete("some-old-id") is False
     assert seen == []
 
 
 async def test_an_error_report_is_not_recorded_as_played(sink):
     seen: list[bool] = []
 
-    async def on_complete(bus, item_id, natural):
+    def on_complete(bus, item_id, natural):
         seen.append(natural)
 
     sink.on_complete = on_complete
     it = visual_item()
     await sink.start(it)
 
-    await sink.report_complete(it.id, natural=False)
+    sink.report_complete(it.id, natural=False)
     assert seen == [False]
 
 

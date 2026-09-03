@@ -45,7 +45,7 @@ async def surface(request: Request) -> HTMLResponse:
 
 
 @router.get("/surface/events")
-async def events(request: Request, engine: EngineDep) -> StreamingResponse:
+async def events(engine: EngineDep) -> StreamingResponse:
     """Server-sent events. `EventSource` reconnects on its own, which is the
     whole reason this shape was chosen over a socket — a closed laptop lid
     should not need client code to recover from."""
@@ -53,11 +53,12 @@ async def events(request: Request, engine: EngineDep) -> StreamingResponse:
     queue = sink.subscribe()
 
     async def stream():
-        # Disconnection is detected by this generator being closed, not by
-        # polling `request.is_disconnected()`. That call awaits a receive
-        # message, and on a transport that never sends one it blocks forever —
-        # which stalls the whole stream rather than the one check. The `finally`
-        # below runs on close either way, which is all the cleanup needs.
+        # Disconnection is detected by this generator being closed, which is
+        # why the route takes no Request. The obvious alternative — polling
+        # `request.is_disconnected()` — awaits a receive message, and on a
+        # transport that never sends one it blocks forever, stalling the whole
+        # stream rather than the one check. The `finally` below runs on close
+        # either way, which is all the cleanup needs.
         try:
             # Tell the browser to back off a little before retrying. The default
             # is aggressive enough to hammer a server that is restarting.
@@ -107,7 +108,7 @@ async def complete(body: CompleteIn, engine: EngineDep) -> dict:
     and retrying would not help.
     """
     sink = _sink(engine)
-    accepted = await sink.report_complete(body.item_id, natural=body.natural)
+    accepted = sink.report_complete(body.item_id, natural=body.natural)
     if body.detail:
         log.info("surface reported %s: %s", body.item_id, body.detail)
         engine.warn("backdrop", "surface", f"{body.item_id}: {body.detail}")
