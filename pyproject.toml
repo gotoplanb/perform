@@ -22,8 +22,8 @@ dependencies = [
     # a block of float32 frames per bus, summed. Deliberately no scipy: the
     # handful of biquads the treatment presets need are a dozen lines each
     # (audio/dsp.py), and scipy is a 40MB dependency to avoid.
-    "numpy>=2.0",
-    "sounddevice>=0.5",
+    "numpy>=2.5.3",
+    "sounddevice>=0.5.6",
     "soundfile>=0.13",
     # Telemetry. Pinned to the same floors conduct and wander use so all three
     # services speak an identical OTLP dialect into Watchtower's Alloy collector.
