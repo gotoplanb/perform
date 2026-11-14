@@ -28,7 +28,7 @@ dependencies = [
     # Telemetry. Pinned to the same floors conduct and wander use so all three
     # services speak an identical OTLP dialect into Watchtower's Alloy collector.
     # Do not raise these independently of the other two repos.
-    "opentelemetry-api>=1.28",
+    "opentelemetry-api>=1.45.2",
     "opentelemetry-sdk>=1.28",
     "opentelemetry-exporter-otlp-proto-grpc>=1.28",
     "opentelemetry-instrumentation-fastapi>=0.49b0",
